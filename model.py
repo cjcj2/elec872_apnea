@@ -54,7 +54,7 @@ class ApneaDetectionModel(nn.Module):
         self.n_channels = n_channels
         self.n_tokens = n_bands * n_channels
 
-        # cnn applied to each channel
+        # cnn applied per token
         self.backbone = CNN1D(d_model=d_model, dropout=dropout)
         self.pool = AttnPool1D(d_model=d_model)
 
@@ -66,12 +66,12 @@ class ApneaDetectionModel(nn.Module):
         self.stage_emb = nn.Embedding(n_stages, d_model)
         self.stage_token = nn.Parameter(torch.zeros(1, 1, d_model))
 
-        # per-band cross-attention
+        # stage-to-band cross-attention
         self.band_to_chan_attn = nn.MultiheadAttention(
             embed_dim=d_model, num_heads=n_heads, dropout=attn_dropout, batch_first=True
         )
 
-        # per-channel cross-attention
+        # channel self-attention
         self.chan_cross_attn = nn.MultiheadAttention(
             embed_dim=d_model, num_heads=n_heads, dropout=attn_dropout, batch_first=True
         )
@@ -128,6 +128,7 @@ class ApneaDetectionModel(nn.Module):
 
         tok_bc = tok.view(B, self.n_bands, self.n_channels, -1).permute(0, 2, 1, 3).contiguous()
 
+        # stage-to-band cross-attention
         chan_summaries = []
         for c in range(self.n_channels):
             band_tokens_c = tok_bc[:, c, :, :]
@@ -139,12 +140,12 @@ class ApneaDetectionModel(nn.Module):
 
         chan_sum = torch.cat(chan_summaries, dim=1)
 
-        # cross-attention
+        # channel self-attention
         attn_out, _ = self.chan_cross_attn(chan_sum, chan_sum, chan_sum)
         z = self.norm1(attn_out + chan_sum)
         z = self.norm2(z + self.ff1(z))
 
-        # mean pooling
+        # mean pooling over channel summaries
         z = z.mean(dim=1)
 
         # classifier output
@@ -168,7 +169,7 @@ class ApneaDetectionModelFewerBands(nn.Module):
         self.n_channels = n_channels
         self.n_tokens = n_bands * n_channels
 
-        # cnn applied to each channel
+        # cnn applied per token
         self.backbone = CNN1D(d_model=d_model, dropout=dropout)
         self.pool = AttnPool1D(d_model=d_model)
 
@@ -180,17 +181,17 @@ class ApneaDetectionModelFewerBands(nn.Module):
         self.stage_emb = nn.Embedding(n_stages, d_model)
         self.stage_token = nn.Parameter(torch.zeros(1, 1, d_model))
 
-        # per-band cross-attention
+        # stage-to-band cross-attention
         self.band_to_chan_attn = nn.MultiheadAttention(
             embed_dim=d_model, num_heads=n_heads, dropout=attn_dropout, batch_first=True
         )
 
-        # per-channel cross-attention
+        # channel self-attention
         self.chan_cross_attn = nn.MultiheadAttention(
             embed_dim=d_model, num_heads=n_heads, dropout=attn_dropout, batch_first=True
         )
 
-        # layer norms and ffns
+        # layer normalization
         self.norm0 = nn.LayerNorm(d_model)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
@@ -242,7 +243,7 @@ class ApneaDetectionModelFewerBands(nn.Module):
 
         tok_bc = tok.view(B, self.n_bands, self.n_channels, -1).permute(0, 2, 1, 3).contiguous()
 
-        # attention
+        # stage-to-band cross-attention
         chan_summaries = []
         for c in range(self.n_channels):
             band_tokens_c = tok_bc[:, c, :, :]
@@ -254,11 +255,12 @@ class ApneaDetectionModelFewerBands(nn.Module):
 
         chan_sum = torch.cat(chan_summaries, dim=1)
 
+        # channel self-attention
         attn_out, _ = self.chan_cross_attn(chan_sum, chan_sum, chan_sum)
         z = self.norm1(attn_out + chan_sum)
         z = self.norm2(z + self.ff1(z))
 
-        # mean pooling
+        # mean pooling over channel summaries
         z = z.mean(dim=1)
 
         # classifier output
@@ -280,7 +282,7 @@ class ApneaDetectionModelNoAttention(nn.Module):
         self.n_channels = n_channels
         self.n_tokens = n_bands * n_channels
 
-        # cnn applied to each channel
+        # cnn applied per token
         self.backbone = CNN1D(d_model=d_model, dropout=dropout)
         self.pool = AttnPool1D(d_model=d_model)
 
@@ -291,7 +293,7 @@ class ApneaDetectionModelNoAttention(nn.Module):
         # stage embedding
         self.stage_emb = nn.Embedding(n_stages, d_model)
 
-        # simple mlp instead of attention
+        # simple mlp fusion instead of attention
         self.fusion = nn.Sequential(
             nn.Linear(d_model * (self.n_tokens + 1), 4 * d_model),
             nn.LayerNorm(4 * d_model),
@@ -330,7 +332,7 @@ class ApneaDetectionModelNoAttention(nn.Module):
         # stage embedding
         s = self.stage_emb(stage)
 
-        # concatenate all tokens with stage embedding
+        # flatten tokens and concatenate stage embedding
         all_features = torch.cat([tok.view(B, -1), s], dim=1)
 
         # simple feedforward fusion
@@ -357,7 +359,7 @@ class ApneaDetectionModelSingleChannel(nn.Module):
         self.n_channels = n_channels
         self.n_tokens = n_bands * n_channels
 
-        # cnn applied to each channel
+        # cnn applied per band token
         self.backbone = CNN1D(d_model=d_model, dropout=dropout)
         self.pool = AttnPool1D(d_model=d_model)
 
@@ -368,12 +370,12 @@ class ApneaDetectionModelSingleChannel(nn.Module):
         self.stage_emb = nn.Embedding(n_stages, d_model)
         self.stage_token = nn.Parameter(torch.zeros(1, 1, d_model))
 
-        # only single cross-attention
+        # stage-to-band cross-attention
         self.band_attn = nn.MultiheadAttention(
             embed_dim=d_model, num_heads=n_heads, dropout=attn_dropout, batch_first=True
         )
 
-        # layer norms and ffns
+        # layer normalization
         self.norm0 = nn.LayerNorm(d_model)
         self.norm1 = nn.LayerNorm(d_model)
 
@@ -414,7 +416,7 @@ class ApneaDetectionModelSingleChannel(nn.Module):
         s = self.stage_emb(stage).unsqueeze(1)
         stage_tok = self.stage_token.expand(B, -1, -1) + s
 
-        # single cross-attention over band tokens
+        # stage-to-band cross-attention over band tokens
         q = stage_tok
         attn_out, _ = self.band_attn(q, tok, tok)
 
@@ -422,7 +424,7 @@ class ApneaDetectionModelSingleChannel(nn.Module):
         y = self.norm0(attn_out + q)
         z = self.norm1(y + self.ff0(y))
 
-        # squeeze to get final representation
+        # squeeze pooled token
         z = z.squeeze(1)
 
         # classifier output
